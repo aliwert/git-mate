@@ -1,0 +1,32 @@
+[package]
+name = "aliwert"
+version = "0.1.0"
+edition = "2021"
+description = "CLI tool to automate pushing local projects to GitHub"
+authors = ["Aliwert Developer"]
+license = "MIT"
+repository = "https://github.com/aliwert/aliwert-github-auto-cli"
+readme = "README.md"
+keywords = ["github", "git", "cli", "automation"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+clap = "2.33.3"
+colored = "2.0.0"
+dialoguer = "0.10.2"
+dirs = "4.0.0"
+reqwest = { version = "0.11.12", features = ["blocking", "json"] }
+serde = { version = "1.0.145", features = ["derive"] }
+serde_json = "1.0.86"
+toml = "0.5.9"
+indicatif = "0.17.0"
+
+[[bin]]
+name = "aliwert"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+codegen-units = 1

@@ -1,5 +1,8 @@
-use clap::{App, AppSettings, Arg, SubCommand};
-
+use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
+use colored::*;
+use std::fs;
+use std::path::Path;
+use std::str;
 /*const CONFIG_DIR: &str = ".aliwert";
 const CONFIG_FILE: &str = "config.json";
 const GITIGNORE_API_URL: &str = "https://api.github.com/gitignore/templates";*/
@@ -199,4 +202,117 @@ fn main() {
                         .possible_values(&["ci", "deploy", "custom"]),
                 ),
         );
+    let matches = app.get_matches();
+    match matches.subcommand() {
+        ("init", Some(sub_matches)) => init_command(sub_matches),
+        _ => unreachable!("Subcommand should be handled above"),
+    }
+}
+
+fn init_command(matches: &ArgMatches) {
+    // check if already a git repository
+    if is_git_repository() {
+        println!("{}", "This directory is already a git repository.".yellow());
+    } else {
+        // Initialize git repository
+        match run_command("git", &["init"]) {
+            Ok(_) => println!("{}", "Git repository initialized successfully.".green()),
+            Err(e) => {
+                println!("{} {}", "Failed to initialize git repository:".red(), e);
+                return;
+            }
+        }
+    }
+
+    // get repository information
+    let repo_info = get_repository_info(matches);
+
+    // load configuration
+    let config = match load_config() {
+        Ok(config) => config,
+        Err(_) => {
+            println!(
+                "{}",
+                "No GitHub configuration found. Please run 'aliwert config' first.".red()
+            );
+            return;
+        }
+    };
+
+    // set up .gitignore if requested
+    if let Some(template) = matches.value_of("gitignore") {
+        setup_gitignore(template, &config);
+    }
+
+    // set up license if requested
+    if let Some(license) = matches.value_of("license") {
+        setup_license(license, &config);
+    }
+
+    // create GitHub repository
+    match create_github_repo(&config, &repo_info) {
+        Ok(repo_url) => {
+            println!("{} {}", "GitHub repository created:".green(), repo_url);
+
+            // add remote
+            match run_command("git", &["remote", "add", "origin", &repo_url]) {
+                Ok(_) => println!("{}", "Remote 'origin' added successfully.".green()),
+                Err(e) => println!("{} {}", "Failed to add remote:".red(), e),
+            }
+
+            // create README.md if it doesn't exist
+            if !Path::new("README.md").exists() {
+                match fs::write(
+                    "README.md",
+                    format!("# {}\n\n{}", repo_info.name, repo_info.description),
+                ) {
+                    Ok(_) => println!("{}", "Created README.md file.".green()),
+                    Err(e) => println!("{} {}", "Failed to create README.md:".red(), e),
+                }
+            }
+
+            // set up GitHub Actions workflow if requested
+            if let Some(workflow_type) = matches.value_of("workflow") {
+                setup_workflow(workflow_type);
+            }
+
+            // add all files
+            match run_command("git", &["add", "."]) {
+                Ok(_) => println!("{}", "Added files to staging area.".green()),
+                Err(e) => println!("{} {}", "Failed to add files:".red(), e),
+            }
+
+            // initial commit
+            match run_command("git", &["commit", "-m", "Initial commit"]) {
+                Ok(_) => println!("{}", "Created initial commit.".green()),
+                Err(e) => println!("{} {}", "Failed to create initial commit:".red(), e),
+            }
+
+            // get default branch from config or use main/master
+            let default_branch = config.default_branch.unwrap_or_else(|| "main".to_string());
+
+            // rename current branch if needed
+            match get_current_branch() {
+                Ok(current_branch) => {
+                    if current_branch != default_branch {
+                        match run_command("git", &["branch", "-M", &default_branch]) {
+                            Ok(_) => println!("{} {}", "Renamed branch to".green(), default_branch),
+                            Err(e) => println!("{} {}", "Failed to rename branch:".red(), e),
+                        }
+                    }
+                }
+                Err(_) => println!("{}", "Could not determine current branch.".yellow()),
+            }
+
+            // push to GitHub
+            match run_command("git", &["push", "-u", "origin", &default_branch]) {
+                Ok(_) => println!(
+                    "{}",
+                    "Project pushed to GitHub successfully!".green().bold()
+                ),
+                Err(e) => println!("{} {}", "Failed to push to GitHub:".red(), e),
+            }
+        }
+        Err(e) => println!("{} {}", "Failed to create GitHub repository:".red(), e),
+    }
 }

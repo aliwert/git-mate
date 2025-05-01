@@ -1,5 +1,6 @@
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 use colored::*;
+use dialoguer::Input;
 use std::fs;
 use std::path::Path;
 use std::str;
@@ -314,5 +315,100 @@ fn init_command(matches: &ArgMatches) {
             }
         }
         Err(e) => println!("{} {}", "Failed to create GitHub repository:".red(), e),
+    }
+}
+
+fn push_command(matches: &ArgMatches) {
+    if !is_git_repository() {
+        println!(
+            "{}",
+            "Not a git repository. Run 'aliwert init' first.".red()
+        );
+        return;
+    }
+
+    // get commit message
+    let message = match matches.value_of("message") {
+        Some(msg) => msg.to_string(),
+        None => {
+            let default_msg = "Update";
+            match Input::<String>::new()
+                .with_prompt("Commit message")
+                .default(default_msg.to_string())
+                .interact()
+            {
+                Ok(msg) => msg,
+                Err(_) => {
+                    println!(
+                        "{}",
+                        "Failed to get commit message. Using default.".yellow()
+                    );
+                    default_msg.to_string()
+                }
+            }
+        }
+    };
+
+    // check for uncommitted changes
+    match run_command("git", &["status", "--porcelain"]) {
+        Ok(output) => {
+            let changes = str::from_utf8(&output.stdout).unwrap_or("").trim();
+
+            if changes.is_empty() {
+                println!("{}", "No changes to commit. Working tree clean.".yellow());
+
+                // push anyway in case there are unpushed commits
+                let current_branch = match get_current_branch() {
+                    Ok(branch) => branch,
+                    Err(e) => {
+                        println!("{} {}", "Failed to get current branch:".red(), e);
+                        return;
+                    }
+                };
+
+                match run_command("git", &["push", "origin", &current_branch]) {
+                    Ok(_) => println!("{}", "Pushed existing commits to GitHub.".green()),
+                    Err(e) => println!("{} {}", "Failed to push:".red(), e),
+                }
+
+                return;
+            }
+        }
+        Err(e) => println!("{} {}", "Failed to check git status:".yellow(), e),
+    }
+
+    // add all files
+    match run_command("git", &["add", "."]) {
+        Ok(_) => println!("{}", "Added files to staging area.".green()),
+        Err(e) => {
+            println!("{} {}", "Failed to add files:".red(), e);
+            return;
+        }
+    }
+
+    // commit changes
+    match run_command("git", &["commit", "-m", &message]) {
+        Ok(_) => println!("{}", "Changes committed successfully.".green()),
+        Err(e) => {
+            println!("{} {}", "Failed to commit changes:".red(), e);
+            return;
+        }
+    }
+
+    // push to GitHub
+    let current_branch = match get_current_branch() {
+        Ok(branch) => branch,
+        Err(e) => {
+            println!("{} {}", "Failed to get current branch:".red(), e);
+            return;
+        }
+    };
+
+    match run_command("git", &["push", "origin", &current_branch]) {
+        Ok(_) => println!(
+            "{}",
+            "Changes pushed to GitHub successfully!".green().bold()
+        ),
+        Err(e) => println!("{} {}", "Failed to push changes:".red(), e),
     }
 }

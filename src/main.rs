@@ -395,7 +395,7 @@ fn push_command(matches: &ArgMatches) {
         }
     }
 
-    // push to GitHub
+    // push to github
     let current_branch = match get_current_branch() {
         Ok(branch) => branch,
         Err(e) => {
@@ -410,5 +410,124 @@ fn push_command(matches: &ArgMatches) {
             "Changes pushed to GitHub successfully!".green().bold()
         ),
         Err(e) => println!("{} {}", "Failed to push changes:".red(), e),
+    }
+}
+
+fn config_command(matches: &ArgMatches) {
+    let mut config = load_config().unwrap_or_else(|_| Config {
+        github_token: String::new(),
+        username: String::new(),
+        default_branch: Some("main".to_string()),
+        default_license: None,
+    });
+
+    // update token if provided
+    if let Some(token) = matches.value_of("token") {
+        config.github_token = token.to_string();
+    }
+
+    // update username if provided
+    if let Some(username) = matches.value_of("username") {
+        config.username = username.to_string();
+    }
+
+    // update default branch if provided
+    if let Some(branch) = matches.value_of("default-branch") {
+        config.default_branch = Some(branch.to_string());
+    }
+
+    // if no arguments provided, prompt interactively
+    if !matches.is_present("token")
+        && !matches.is_present("username")
+        && !matches.is_present("default-branch")
+    {
+        println!("{}", "GitHub Configuration".cyan().bold());
+        println!("{}", "Please provide your GitHub credentials.".cyan());
+
+        // get username
+        config.username = Input::new()
+            .with_prompt("GitHub username")
+            .default(config.username)
+            .interact()
+            .unwrap_or_else(|_| config.username);
+
+        // get token
+        config.github_token = Password::new()
+            .with_prompt("GitHub Personal Access Token (with repo scope)")
+            .with_confirmation("Confirm token", "Tokens don't match")
+            .interact()
+            .unwrap_or_else(|_| config.github_token);
+
+        // get default branch
+        config.default_branch = Some(
+            Input::new()
+                .with_prompt("Default branch name")
+                .default(config.default_branch.unwrap_or_else(|| "main".to_string()))
+                .interact()
+                .unwrap_or_else(|_| "main".to_string()),
+        );
+    }
+
+    // validate config.
+    if config.github_token.is_empty() || config.username.is_empty() {
+        println!("{}", "GitHub token and username are required.".red());
+        return;
+    }
+
+    // save config.
+    match save_config(&config) {
+        Ok(_) => println!("{}", "Configuration saved successfully.".green()),
+        Err(e) => println!("{} {}", "Failed to save configuration:".red(), e),
+    }
+}
+
+fn branch_command(matches: &ArgMatches) {
+    if !is_git_repository() {
+        println!(
+            "{}",
+            "Not a git repository. Run 'aliwert init' first.".red()
+        );
+        return;
+    }
+
+    match matches.subcommand() {
+        ("create", Some(create_matches)) => {
+            let branch_name = create_matches.value_of("name").unwrap();
+
+            // create the branch
+            match run_command("git", &["branch", branch_name]) {
+                Ok(_) => {
+                    println!("{} {}", "Branch created:".green(), branch_name);
+
+                    // checkout if requested
+                    if create_matches.is_present("checkout") {
+                        match run_command("git", &["checkout", branch_name]) {
+                            Ok(_) => println!("{} {}", "Switched to branch:".green(), branch_name),
+                            Err(e) => println!("{} {}", "Failed to switch branch:".red(), e),
+                        }
+                    }
+                }
+                Err(e) => println!("{} {}", "Failed to create branch:".red(), e),
+            }
+        }
+        ("list", _) => match run_command("git", &["branch"]) {
+            Ok(output) => {
+                let branches = str::from_utf8(&output.stdout)
+                    .unwrap_or("Could not parse branches")
+                    .trim();
+                println!("{}", "Branches:".cyan());
+                println!("{}", branches);
+            }
+            Err(e) => println!("{} {}", "Failed to list branches:".red(), e),
+        },
+        ("switch", Some(switch_matches)) => {
+            let branch_name = switch_matches.value_of("name").unwrap();
+
+            match run_command("git", &["checkout", branch_name]) {
+                Ok(_) => println!("{} {}", "Switched to branch:".green(), branch_name),
+                Err(e) => println!("{} {}", "Failed to switch branch:".red(), e),
+            }
+        }
+        _ => println!("{}", "Unknown branch subcommand".red()),
     }
 }

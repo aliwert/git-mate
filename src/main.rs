@@ -531,3 +531,329 @@ fn branch_command(matches: &ArgMatches) {
         _ => println!("{}", "Unknown branch subcommand".red()),
     }
 }
+
+fn gitignore_command(matches: &ArgMatches) {
+    let config = match load_config() {
+        Ok(config) => config,
+        Err(_) => {
+            println!(
+                "{}",
+                "No GitHub configuration found. Please run 'aliwert config' first.".red()
+            );
+            return;
+        }
+    };
+
+    let template = match matches.value_of("template") {
+        Some(template) => template.to_string(),
+        None => {
+            // interactive template selection
+            let templates = get_gitignore_templates(&config);
+            match templates {
+                Ok(templates) => {
+                    let selection = Select::new()
+                        .with_prompt("Select a .gitignore template")
+                        .items(&templates)
+                        .interact();
+
+                    match selection {
+                        Ok(index) => templates[index].clone(),
+                        Err(_) => {
+                            println!("{}", "Template selection cancelled.".yellow());
+                            return;
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("{} {}", "Failed to fetch .gitignore templates:".red(), e);
+                    return;
+                }
+            }
+        }
+    };
+
+    setup_gitignore(&template, &config);
+}
+
+fn issue_command(matches: &ArgMatches) {
+    if !is_git_repository() {
+        println!(
+            "{}",
+            "Not a git repository. Run 'aliwert init' first.".red()
+        );
+        return;
+    }
+
+    let config = match load_config() {
+        Ok(config) => config,
+        Err(_) => {
+            println!(
+                "{}",
+                "No GitHub configuration found. Please run 'aliwert config' first.".red()
+            );
+            return;
+        }
+    };
+
+    let repo_name = match get_repo_name_from_remote() {
+        Ok(name) => name,
+        Err(e) => {
+            println!("{} {}", "Failed to determine repository name:".red(), e);
+            return;
+        }
+    };
+
+    let issue = IssueInfo {
+        title: matches
+            .value_of("title")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                Input::new()
+                    .with_prompt("Issue title")
+                    .interact()
+                    .unwrap_or_else(|_| "New Issue".to_string())
+            }),
+        body: matches
+            .value_of("body")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                Input::new()
+                    .with_prompt("Issue description")
+                    .interact()
+                    .unwrap_or_else(|_| "".to_string())
+            }),
+        labels: matches
+            .values_of("label")
+            .map(|vals| vals.map(|v| v.to_string()).collect())
+            .unwrap_or_else(Vec::new),
+    };
+
+    match create_github_issue(&config, &repo_name, &issue) {
+        Ok(url) => println!("{} {}", "Issue created:".green(), url),
+        Err(e) => println!("{} {}", "Failed to create issue:".red(), e),
+    }
+}
+
+fn pr_command(matches: &ArgMatches) {
+    if !is_git_repository() {
+        println!(
+            "{}",
+            "Not a git repository. Run 'aliwert init' first.".red()
+        );
+        return;
+    }
+
+    let config = match load_config() {
+        Ok(config) => config,
+        Err(_) => {
+            println!(
+                "{}",
+                "No GitHub configuration found. Please run 'aliwert config' first.".red()
+            );
+            return;
+        }
+    };
+
+    let repo_name = match get_repo_name_from_remote() {
+        Ok(name) => name,
+        Err(e) => {
+            println!("{} {}", "Failed to determine repository name:".red(), e);
+            return;
+        }
+    };
+
+    let current_branch = match get_current_branch() {
+        Ok(branch) => branch,
+        Err(e) => {
+            println!("{} {}", "Failed to get current branch:".red(), e);
+            return;
+        }
+    };
+
+    // get title
+    let title = matches
+        .value_of("title")
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            Input::new()
+                .with_prompt("Pull request title")
+                .default(format!("Merge {} into main", current_branch))
+                .interact()
+                .unwrap_or_else(|_| format!("Merge {} into main", current_branch))
+        });
+
+    // get body
+    let body = matches
+        .value_of("body")
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            Input::new()
+                .with_prompt("Pull request description")
+                .interact()
+                .unwrap_or_else(|_| "".to_string())
+        });
+
+    // get base branch
+    let base = matches
+        .value_of("base")
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            let default = "main".to_string();
+            Input::new()
+                .with_prompt("Base branch (target)")
+                .default(default)
+                .interact()
+                .unwrap_or_else(|_| "main".to_string())
+        });
+
+    // get head branch
+    let head = matches
+        .value_of("head")
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            Input::new()
+                .with_prompt("Head branch (source)")
+                .default(current_branch.clone())
+                .interact()
+                .unwrap_or_else(|_| current_branch.clone())
+        });
+
+    // push the current branch first to ensure it's on GitHub
+    match run_command("git", &["push", "--set-upstream", "origin", &head]) {
+        Ok(_) => println!("{} {}", "Pushed branch to GitHub:".green(), head),
+        Err(e) => {
+            println!("{} {}", "Failed to push branch:".red(), e);
+            println!("{}", "Continuing to create PR anyway...".yellow());
+        }
+    }
+
+    match create_github_pr(&config, &repo_name, &title, &body, &base, &head) {
+        Ok(url) => println!("{} {}", "Pull request created:".green(), url),
+        Err(e) => println!("{} {}", "Failed to create pull request:".red(), e),
+    }
+}
+
+fn workflow_command(matches: &ArgMatches) {
+    let workflow_type = matches.value_of("type").unwrap_or_else(|| {
+        let options = vec!["Continuous Integration", "Deployment", "Custom"];
+        let selection = Select::new()
+            .with_prompt("Select a workflow type")
+            .items(&options)
+            .default(0)
+            .interact()
+            .unwrap_or(0);
+
+        match selection {
+            0 => "ci",
+            1 => "deploy",
+            _ => "custom",
+        }
+    });
+
+    setup_workflow(workflow_type);
+}
+
+fn get_repository_info(matches: &ArgMatches) -> RepoInfo {
+    let current_dir = Path::new(".")
+        .canonicalize()
+        .unwrap_or_else(|_| Path::new(".").to_path_buf());
+    let default_name = current_dir
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    let name = match matches.value_of("name") {
+        Some(name) => name.to_string(),
+        None => Input::new()
+            .with_prompt("Repository name")
+            .default(default_name)
+            .interact()
+            .unwrap(),
+    };
+
+    let description = match matches.value_of("description") {
+        Some(desc) => desc.to_string(),
+        None => Input::new()
+            .with_prompt("Repository description")
+            .default(String::from("Created with aliwert"))
+            .interact()
+            .unwrap(),
+    };
+
+    let private = if matches.is_present("private") {
+        true
+    } else {
+        let options = vec!["Public", "Private"];
+        let selection = Select::new()
+            .with_prompt("Repository visibility")
+            .default(0)
+            .items(&options)
+            .interact()
+            .unwrap_or(0);
+        selection == 1
+    };
+
+    let license = matches.value_of("license").map(|s| s.to_string());
+
+    RepoInfo {
+        name,
+        description,
+        private,
+        license,
+    }
+}
+
+fn create_github_repo(config: &Config, repo_info: &RepoInfo) -> Result<String, String> {
+    let client = Client::new();
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("application/vnd.github.v3+json"),
+    );
+    headers.insert(USER_AGENT, HeaderValue::from_static("Aliwert-CLI"));
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("token {}", config.github_token))
+            .map_err(|e| e.to_string())?,
+    );
+
+    let repo_data = json!({
+        "name": repo_info.name,
+        "description": repo_info.description,
+        "private": repo_info.private,
+        "auto_init": false,
+        "license_template": repo_info.license
+    });
+
+    let res = client
+        .post("https://api.github.com/user/repos")
+        .headers(headers)
+        .json(&repo_data)
+        .send()
+        .map_err(|e| e.to_string())?;
+
+    if res.status().is_success() {
+        let json: Value = res.json().map_err(|e| e.to_string())?;
+        if let Some(ssh_url) = json["ssh_url"].as_str() {
+            Ok(ssh_url.to_string())
+        } else if let Some(clone_url) = json["clone_url"].as_str() {
+            Ok(clone_url.to_string())
+        } else {
+            Err("Failed to get repository URL from GitHub response".to_string())
+        }
+    } else {
+        let status = res.status();
+        let text = res.text().unwrap_or_else(|_| "Unknown error".to_string());
+        Err(format!("GitHub API error ({}): {}", status, text))
+    }
+}
+
+fn get_config_path() -> Result<std::path::PathBuf, String> {
+    let home = home_dir().ok_or_else(|| "Could not find home directory".to_string())?;
+    let config_dir = home.join(CONFIG_DIR);
+    if !config_dir.exists() {
+        fs::create_dir_all(&config_dir).map_err(|e| e.to_string())?;
+    }
+    Ok(config_dir.join(CONFIG_FILE))
+}

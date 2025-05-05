@@ -1,14 +1,43 @@
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 use colored::*;
-use dialoguer::Input;
+use dialoguer::{Input, Password, Select};
+use dirs::home_dir;
+use reqwest::blocking::Client;
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
+use std::process::{Command, Output};
 use std::str;
-/*const CONFIG_DIR: &str = ".aliwert";
+
+const CONFIG_DIR: &str = ".aliwert";
 const CONFIG_FILE: &str = "config.json";
-const GITIGNORE_API_URL: &str = "https://api.github.com/gitignore/templates";*/
+const GITIGNORE_API_URL: &str = "https://api.github.com/gitignore/templates";
 const VERSION: &str = "0.1.0";
 
+#[derive(Debug, Serialize, Deserialize)]
+struct Config {
+    github_token: String,
+    username: String,
+    default_branch: Option<String>,
+    default_license: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct RepoInfo {
+    name: String,
+    description: String,
+    private: bool,
+    license: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct IssueInfo {
+    title: String,
+    body: String,
+    labels: Vec<String>,
+}
 fn main() {
     let app = App::new("aliwert")
         .version(VERSION)
@@ -205,8 +234,15 @@ fn main() {
         );
     let matches = app.get_matches();
     match matches.subcommand() {
-        ("init", Some(sub_matches)) => init_command(sub_matches),
-        _ => unreachable!("Subcommand should be handled above"),
+        ("init", Some(init_matches)) => init_command(init_matches),
+        ("push", Some(push_matches)) => push_command(push_matches),
+        ("config", Some(config_matches)) => config_command(config_matches),
+        ("branch", Some(branch_matches)) => branch_command(branch_matches),
+        ("gitignore", Some(gitignore_matches)) => gitignore_command(gitignore_matches),
+        ("issue", Some(issue_matches)) => issue_command(issue_matches),
+        ("pr", Some(pr_matches)) => pr_command(pr_matches),
+        ("workflow", Some(workflow_matches)) => workflow_command(workflow_matches),
+        _ => unreachable!(),
     }
 }
 

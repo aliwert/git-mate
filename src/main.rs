@@ -483,9 +483,9 @@ fn config_command(matches: &ArgMatches) {
         // get username
         config.username = Input::new()
             .with_prompt("GitHub username")
-            .default(config.username)
+            .default(config.username.clone())
             .interact()
-            .unwrap_or_else(|_| config.username);
+            .unwrap_or_else(|_| config.username.clone());
 
         // get token
         config.github_token = Password::new()

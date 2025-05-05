@@ -857,3 +857,415 @@ fn get_config_path() -> Result<std::path::PathBuf, String> {
     }
     Ok(config_dir.join(CONFIG_FILE))
 }
+
+fn load_config() -> Result<Config, String> {
+    let config_path = get_config_path()?;
+    if !config_path.exists() {
+        return Err("Config file does not exist".to_string());
+    }
+    let config_str = fs::read_to_string(config_path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&config_str).map_err(|e| e.to_string())
+}
+
+fn save_config(config: &Config) -> Result<(), String> {
+    let config_path = get_config_path()?;
+    let config_str = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
+    fs::write(config_path, config_str).map_err(|e| e.to_string())
+}
+
+fn run_command(command: &str, args: &[&str]) -> Result<Output, String> {
+    Command::new(command)
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())
+        .and_then(|output| {
+            if output.status.success() {
+                Ok(output)
+            } else {
+                let error = str::from_utf8(&output.stderr)
+                    .unwrap_or("Unknown error")
+                    .trim();
+                Err(error.to_string())
+            }
+        })
+}
+
+fn is_git_repository() -> bool {
+    Path::new(".git").exists()
+}
+
+fn get_current_branch() -> Result<String, String> {
+    let output = run_command("git", &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    let branch = str::from_utf8(&output.stdout)
+        .map_err(|e| e.to_string())?
+        .trim()
+        .to_string();
+    Ok(branch)
+}
+
+fn get_repo_name_from_remote() -> Result<String, String> {
+    // try to get the remote URL
+    let output = run_command("git", &["remote", "get-url", "origin"])?;
+    let remote_url = str::from_utf8(&output.stdout)
+        .map_err(|e| e.to_string())?
+        .trim();
+
+    // parse the repository name from the URL
+    // format could be:
+    // - git@github.com:username/repo.git
+    // - https://github.com/username/repo.git
+
+    if remote_url.contains("github.com") {
+        let parts: Vec<&str> = if remote_url.starts_with("git@") {
+            // SSH format
+            remote_url.split(':').collect()
+        } else {
+            // HTTPS format
+            remote_url.split('/').collect()
+        };
+
+        if parts.len() >= 2 {
+            let repo_part = parts[parts.len() - 1].replace(".git", "");
+            let username_part = parts[parts.len() - 2].replace("github.com:", "");
+
+            return Ok(format!("{}/{}", username_part, repo_part));
+        }
+    }
+
+    Err("Could not parse repository name from remote URL".to_string())
+}
+
+fn get_gitignore_templates(config: &Config) -> Result<Vec<String>, String> {
+    let client = Client::new();
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("application/vnd.github.v3+json"),
+    );
+    headers.insert(USER_AGENT, HeaderValue::from_static("Aliwert-CLI"));
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("token {}", config.github_token))
+            .map_err(|e| e.to_string())?,
+    );
+
+    let res = client
+        .get(GITIGNORE_API_URL)
+        .headers(headers)
+        .send()
+        .map_err(|e| e.to_string())?;
+
+    if res.status().is_success() {
+        let templates: Vec<String> = res.json().map_err(|e| e.to_string())?;
+        Ok(templates)
+    } else {
+        Err(format!(
+            "Failed to fetch gitignore templates: {}",
+            res.status()
+        ))
+    }
+}
+
+fn setup_gitignore(template: &str, config: &Config) {
+    println!(
+        "{} {}",
+        "Setting up .gitignore with template:".cyan(),
+        template
+    );
+
+    let client = Client::new();
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("application/vnd.github.v3+json"),
+    );
+    headers.insert(USER_AGENT, HeaderValue::from_static("Aliwert-CLI"));
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("token {}", config.github_token))
+            .unwrap_or_else(|_| HeaderValue::from_static("")),
+    );
+
+    let url = format!("{}/{}", GITIGNORE_API_URL, template);
+
+    match client.get(&url).headers(headers).send() {
+        Ok(res) => {
+            if res.status().is_success() {
+                match res.json::<Value>() {
+                    Ok(json) => {
+                        if let Some(content) = json["source"].as_str() {
+                            // check if .gitignore already exists
+                            let gitignore_path = Path::new(".gitignore");
+                            let content = if gitignore_path.exists() {
+                                let existing =
+                                    fs::read_to_string(gitignore_path).unwrap_or_default();
+                                format!("{}\n\n# Added by Aliwert\n{}", existing, content)
+                            } else {
+                                format!(
+                                    "# Created by Aliwert using {} template\n{}",
+                                    template, content
+                                )
+                            };
+
+                            match fs::write(gitignore_path, content) {
+                                Ok(_) => {
+                                    println!("{}", ".gitignore file created successfully.".green())
+                                }
+                                Err(e) => println!("{} {}", "Failed to write .gitignore:".red(), e),
+                            }
+                        } else {
+                            println!("{}", "Invalid response format from GitHub API.".red());
+                        }
+                    }
+                    Err(e) => println!("{} {}", "Failed to parse GitHub API response:".red(), e),
+                }
+            } else {
+                println!(
+                    "{} {}",
+                    "Failed to fetch gitignore template:".red(),
+                    res.status()
+                );
+            }
+        }
+        Err(e) => println!("{} {}", "Failed to connect to GitHub API:".red(), e),
+    }
+}
+
+fn setup_license(license: &str, config: &Config) {
+    println!("{} {}", "Setting up license:".cyan(), license);
+
+    let client = Client::new();
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("application/vnd.github.v3+json"),
+    );
+    headers.insert(USER_AGENT, HeaderValue::from_static("Aliwert-CLI"));
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("token {}", config.github_token))
+            .unwrap_or_else(|_| HeaderValue::from_static("")),
+    );
+
+    let url = format!("https://api.github.com/licenses/{}", license);
+
+    match client.get(&url).headers(headers).send() {
+        Ok(res) => {
+            if res.status().is_success() {
+                match res.json::<Value>() {
+                    Ok(json) => {
+                        if let Some(content) = json["body"].as_str() {
+                            match fs::write("LICENSE", content) {
+                                Ok(_) => {
+                                    println!("{}", "LICENSE file created successfully.".green())
+                                }
+                                Err(e) => println!("{} {}", "Failed to write LICENSE:".red(), e),
+                            }
+                        } else {
+                            println!("{}", "Invalid response format from GitHub API.".red());
+                        }
+                    }
+                    Err(e) => println!("{} {}", "Failed to parse GitHub API response:".red(), e),
+                }
+            } else {
+                println!("{} {}", "Failed to fetch license:".red(), res.status());
+            }
+        }
+        Err(e) => println!("{} {}", "Failed to connect to GitHub API:".red(), e),
+    }
+}
+
+fn create_github_issue(
+    config: &Config,
+    repo_name: &str,
+    issue: &IssueInfo,
+) -> Result<String, String> {
+    let client = Client::new();
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("application/vnd.github.v3+json"),
+    );
+    headers.insert(USER_AGENT, HeaderValue::from_static("Aliwert-CLI"));
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("token {}", config.github_token))
+            .map_err(|e| e.to_string())?,
+    );
+
+    let issue_data = json!({
+        "title": issue.title,
+        "body": issue.body,
+        "labels": issue.labels
+    });
+
+    let url = format!("https://api.github.com/repos/{}/issues", repo_name);
+
+    let res = client
+        .post(&url)
+        .headers(headers)
+        .json(&issue_data)
+        .send()
+        .map_err(|e| e.to_string())?;
+
+    if res.status().is_success() {
+        let json: Value = res.json().map_err(|e| e.to_string())?;
+        if let Some(html_url) = json["html_url"].as_str() {
+            Ok(html_url.to_string())
+        } else {
+            Err("Failed to get issue URL from GitHub response".to_string())
+        }
+    } else {
+        let status = res.status();
+        let text = res.text().unwrap_or_else(|_| "Unknown error".to_string());
+        Err(format!("GitHub API error ({}): {}", status, text))
+    }
+}
+
+fn create_github_pr(
+    config: &Config,
+    repo_name: &str,
+    title: &str,
+    body: &str,
+    base: &str,
+    head: &str,
+) -> Result<String, String> {
+    let client = Client::new();
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("application/vnd.github.v3+json"),
+    );
+    headers.insert(USER_AGENT, HeaderValue::from_static("Aliwert-CLI"));
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("token {}", config.github_token))
+            .map_err(|e| e.to_string())?,
+    );
+
+    let pr_data = json!({
+        "title": title,
+        "body": body,
+        "head": head,
+        "base": base
+    });
+
+    let url = format!("https://api.github.com/repos/{}/pulls", repo_name);
+
+    let res = client
+        .post(&url)
+        .headers(headers)
+        .json(&pr_data)
+        .send()
+        .map_err(|e| e.to_string())?;
+
+    if res.status().is_success() {
+        let json: Value = res.json().map_err(|e| e.to_string())?;
+        if let Some(html_url) = json["html_url"].as_str() {
+            Ok(html_url.to_string())
+        } else {
+            Err("Failed to get PR URL from GitHub response".to_string())
+        }
+    } else {
+        let status = res.status();
+        let text = res.text().unwrap_or_else(|_| "Unknown error".to_string());
+        Err(format!("GitHub API error ({}): {}", status, text))
+    }
+}
+
+fn setup_workflow(workflow_type: &str) {
+    // create .github/workflows directory if it doesn't exist
+    let workflows_dir = Path::new(".github").join("workflows");
+    fs::create_dir_all(&workflows_dir).unwrap_or_else(|e| {
+        println!("{} {}", "Failed to create workflows directory:".red(), e);
+        return;
+    });
+
+    let (filename, content) = match workflow_type {
+        "ci" => (
+            "ci.yml",
+            r#"name: CI
+        
+            on:
+            push:
+            branches: [ main, master ]
+            pull_request:
+            branches: [ main, master ]
+            
+            jobs:
+            build:
+            runs-on: ubuntu-latest
+            steps:
+            - uses: actions/checkout@v3
+    
+            - name: Set up environment
+            run: echo "Setting up environment"
+      
+            - name: Build
+            run: echo "Building project"
+      
+            - name: Run tests
+            run: echo "Running tests"
+            "#,
+        ),
+        "deploy" => (
+            "deploy.yml",
+            r#"name: Deploy
+
+            on:
+            push:
+            branches: [ main, master ]
+
+            jobs:
+            deploy:
+            runs-on: ubuntu-latest
+    
+            steps:
+            - uses: actions/checkout@v3
+    
+            - name: Set up environment
+            run: echo "Setting up environment"
+      
+            - name: Build
+            run: echo "Building project"
+      
+            - name: Deploy to production
+            run: echo "Deploying to production"
+            "#,
+        ),
+        _ => (
+            "custom.yml",
+            r#"name: Custom Workflow
+
+            on:
+            push:
+            branches: [ main, master ]
+            pull_request:
+            branches: [ main, master ]
+
+            jobs:
+            custom:
+            runs-on: ubuntu-latest
+    
+            steps:
+            - uses: actions/checkout@v3
+    
+            - name: Custom step 1
+            run: echo "Running custom step 1"
+      
+            - name: Custom step 2
+            run: echo "Running custom step 2"
+            "#,
+        ),
+    };
+
+    let file_path = workflows_dir.join(filename);
+    match fs::write(&file_path, content) {
+        Ok(_) => println!(
+            "{} {}",
+            "GitHub Actions workflow created:".green(),
+            file_path.display()
+        ),
+        Err(e) => println!("{} {}", "Failed to create workflow file:".red(), e),
+    }
+}

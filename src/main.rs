@@ -11,7 +11,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 use std::str;
 
-const CONFIG_DIR: &str = ".aliwert";
+const CONFIG_DIR: &str = ".git_mate";
 const CONFIG_FILE: &str = "config.json";
 const GITIGNORE_API_URL: &str = "https://api.github.com/gitignore/templates";
 const VERSION: &str = "0.1.0";
@@ -39,9 +39,9 @@ struct IssueInfo {
     labels: Vec<String>,
 }
 fn main() {
-    let app = App::new("aliwert")
+    let app = App::new("git_mate")
         .version(VERSION)
-        .author("Aliwert CLI")
+        .author("Git Mate CLI")
         .about("Automates pushing local projects to GitHub")
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .subcommand(
@@ -270,7 +270,7 @@ fn init_command(matches: &ArgMatches) {
         Err(_) => {
             println!(
                 "{}",
-                "No GitHub configuration found. Please run 'aliwert config' first.".red()
+                "No GitHub configuration found. Please run 'git_mate config' first.".red()
             );
             return;
         }
@@ -358,7 +358,7 @@ fn push_command(matches: &ArgMatches) {
     if !is_git_repository() {
         println!(
             "{}",
-            "Not a git repository. Run 'aliwert init' first.".red()
+            "Not a git repository. Run 'git_mate init' first.".red()
         );
         return;
     }
@@ -521,7 +521,7 @@ fn branch_command(matches: &ArgMatches) {
     if !is_git_repository() {
         println!(
             "{}",
-            "Not a git repository. Run 'aliwert init' first.".red()
+            "Not a git repository. Run 'git_mate init' first.".red()
         );
         return;
     }
@@ -574,7 +574,7 @@ fn gitignore_command(matches: &ArgMatches) {
         Err(_) => {
             println!(
                 "{}",
-                "No GitHub configuration found. Please run 'aliwert config' first.".red()
+                "No GitHub configuration found. Please run 'git_mate config' first.".red()
             );
             return;
         }
@@ -615,7 +615,7 @@ fn issue_command(matches: &ArgMatches) {
     if !is_git_repository() {
         println!(
             "{}",
-            "Not a git repository. Run 'aliwert init' first.".red()
+            "Not a git repository. Run 'git_mate init' first.".red()
         );
         return;
     }
@@ -625,7 +625,7 @@ fn issue_command(matches: &ArgMatches) {
         Err(_) => {
             println!(
                 "{}",
-                "No GitHub configuration found. Please run 'aliwert config' first.".red()
+                "No GitHub configuration found. Please run 'git_mate config' first.".red()
             );
             return;
         }
@@ -674,7 +674,7 @@ fn pr_command(matches: &ArgMatches) {
     if !is_git_repository() {
         println!(
             "{}",
-            "Not a git repository. Run 'aliwert init' first.".red()
+            "Not a git repository. Run 'git_mate init' first.".red()
         );
         return;
     }
@@ -684,7 +684,7 @@ fn pr_command(matches: &ArgMatches) {
         Err(_) => {
             println!(
                 "{}",
-                "No GitHub configuration found. Please run 'aliwert config' first.".red()
+                "No GitHub configuration found. Please run 'git_mate config' first.".red()
             );
             return;
         }
@@ -812,7 +812,7 @@ fn get_repository_info(matches: &ArgMatches) -> RepoInfo {
         Some(desc) => desc.to_string(),
         None => Input::new()
             .with_prompt("Repository description")
-            .default(String::from("Created with aliwert"))
+            .default(String::from("Created with git_mate"))
             .interact()
             .unwrap(),
     };
@@ -847,7 +847,7 @@ fn create_github_repo(config: &Config, repo_info: &RepoInfo) -> Result<String, S
         ACCEPT,
         HeaderValue::from_static("application/vnd.github.v3+json"),
     );
-    headers.insert(USER_AGENT, HeaderValue::from_static("Aliwert-CLI"));
+    headers.insert(USER_AGENT, HeaderValue::from_static("Git-Mate-CLI"));
     headers.insert(
         AUTHORIZATION,
         HeaderValue::from_str(&format!("token {}", config.github_token))
@@ -978,7 +978,7 @@ fn get_gitignore_templates(config: &Config) -> Result<Vec<String>, String> {
         ACCEPT,
         HeaderValue::from_static("application/vnd.github.v3+json"),
     );
-    headers.insert(USER_AGENT, HeaderValue::from_static("Aliwert-CLI"));
+    headers.insert(USER_AGENT, HeaderValue::from_static("Git-Mate-CLI"));
     headers.insert(
         AUTHORIZATION,
         HeaderValue::from_str(&format!("token {}", config.github_token))
@@ -1015,7 +1015,7 @@ fn setup_gitignore(template: &str, config: &Config) {
         ACCEPT,
         HeaderValue::from_static("application/vnd.github.v3+json"),
     );
-    headers.insert(USER_AGENT, HeaderValue::from_static("Aliwert-CLI"));
+    headers.insert(USER_AGENT, HeaderValue::from_static("Git-Mate-CLI"));
     headers.insert(
         AUTHORIZATION,
         HeaderValue::from_str(&format!("token {}", config.github_token))
@@ -1035,10 +1035,10 @@ fn setup_gitignore(template: &str, config: &Config) {
                             let content = if gitignore_path.exists() {
                                 let existing =
                                     fs::read_to_string(gitignore_path).unwrap_or_default();
-                                format!("{}\n\n# Added by Aliwert\n{}", existing, content)
+                                format!("{}\n\n# Added by Git-Mate\n{}", existing, content)
                             } else {
                                 format!(
-                                    "# Created by Aliwert using {} template\n{}",
+                                    "# Created by Git-Mate using {} template\n{}",
                                     template, content
                                 )
                             };
@@ -1076,7 +1076,7 @@ fn setup_license(license: &str, config: &Config) {
         ACCEPT,
         HeaderValue::from_static("application/vnd.github.v3+json"),
     );
-    headers.insert(USER_AGENT, HeaderValue::from_static("Aliwert-CLI"));
+    headers.insert(USER_AGENT, HeaderValue::from_static("Git-Mate-CLI"));
     headers.insert(
         AUTHORIZATION,
         HeaderValue::from_str(&format!("token {}", config.github_token))
@@ -1122,7 +1122,7 @@ fn create_github_issue(
         ACCEPT,
         HeaderValue::from_static("application/vnd.github.v3+json"),
     );
-    headers.insert(USER_AGENT, HeaderValue::from_static("Aliwert-CLI"));
+    headers.insert(USER_AGENT, HeaderValue::from_static("Git-Mate-CLI"));
     headers.insert(
         AUTHORIZATION,
         HeaderValue::from_str(&format!("token {}", config.github_token))
@@ -1172,7 +1172,7 @@ fn create_github_pr(
         ACCEPT,
         HeaderValue::from_static("application/vnd.github.v3+json"),
     );
-    headers.insert(USER_AGENT, HeaderValue::from_static("Aliwert-CLI"));
+    headers.insert(USER_AGENT, HeaderValue::from_static("Git-Mate-CLI"));
     headers.insert(
         AUTHORIZATION,
         HeaderValue::from_str(&format!("token {}", config.github_token))

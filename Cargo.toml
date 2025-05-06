@@ -1,11 +1,11 @@
 [package]
-name = "aliwert"
+name = "git_mate"
 version = "0.1.0"
 edition = "2021"
 description = "CLI tool to automate pushing local projects to GitHub"
-authors = ["Aliwert Developer"]
+authors = ["Wert Developer"]
 license = "MIT"
-repository = "https://github.com/aliwert/aliwert-github-auto-cli"
+repository = "https://github.com/aliwert/git-mate"
 readme = "README.md"
 keywords = ["github", "git", "cli", "automation"]
 categories = ["command-line-utilities", "development-tools"]
@@ -22,7 +22,7 @@ toml = "0.5.9"
 indicatif = "0.17.0"
 
 [[bin]]
-name = "aliwert"
+name = "git_mate"
 path = "src/main.rs"
 
 [profile.release]
